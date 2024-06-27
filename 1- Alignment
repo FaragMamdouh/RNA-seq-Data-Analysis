@@ -1,0 +1,67 @@
+# Indexing
+STAR --runThreadN 6 --runMode genomeGenerate --genomeDir results/star/index --genomeFastaFiles reference_genome.fasta --sjdbGTFfile annotation.gtf --sjdbOverhang 100
+
+# Align reads and generate sorted BAM file
+STAR --runThreadN 6 --genomeDir results/star/index --readFilesIn results/trimmed/sample_1_paired.fq.gz results/trimmed/sample_2_paired.fq.gz --readFilesCommand zcat --outFileNamePrefix results/star/sample_ --outSAMtype BAM SortedByCoordinate
+
+# Index the BAM file
+samtools index results/star/sample_Aligned.sortedByCoord.out.bam
+
+# Sort the output BAM file. The suffix may be .gzAligned.out.bam, or -merged.bam. Adjust accordingly.
+samtools sort results/star/sample_Aligned.sortedByCoord.out.bam -o results/star/sample-sorted.bam
+
+# Index the sorted BAM file
+samtools index results/star/sample-sorted.bam
+
+# Generate flagstat report
+samtools flagstat results/star/sample-sorted.bam > results/star/sample-sorted.flagstat
+
+# Run Qualimap to generate QC reports
+qualimap bamqc -bam results/star/sample-sorted.bam -gff gencode.v36.annotation.gtf -outdir results/star/sample-bamqc-qualimap-report --java-mem-size=16G
+
+qualimap rnaseq -bam results/star/sample-sorted.bam -gtf gencode.v36.annotation.gtf -outdir results/star/sample-rnaseq-qualimap-report --java-mem-size=16G
+
+# Extract information from QC results and flagstat files
+
+# The total number of reads mapped (exonic)
+total_reads_mapped=$(cat results/star/sample-rnaseq-qualimap-report/rnaseq_qc_results.txt | grep exonic | cut -d '(' -f 2 | cut -d ')' -f 1)
+echo "Total number of reads mapped (exonic): $total_reads_mapped"
+
+# The total number of reads mapped (general)
+total_mapped=$(cat results/star/sample-sorted.flagstat | grep mapped | head -n 1 | cut -d ' ' -f 1)
+echo "Total number of reads mapped: $total_mapped"
+
+# The total number of properly paired reads
+properly_paired=$(cat results/star/sample-sorted.flagstat | grep 'properly paired' | head -n 1 | cut -d ' ' -f 1)
+echo "Total number of properly paired reads: $properly_paired"
+
+# Create sample.txt file for multi-bamqc
+echo "results/star/sample-sorted.bam" > results/star/sample.txt
+
+# Run Qualimap multi-bamqc
+qualimap multi-bamqc -d results/star/sample.txt -outdir results/star/sample-multi-bamqc-report --java-mem-size=16G
+
+# Compute GC bias
+deeptools computeGCBias -b results/star/sample-sorted.bam --effectiveGenomeSize 3099922541 -g GCA_000001405.15_GRCh38_no_alt_analysis_set.2bit -l 100 --GCbiasFrequenciesFile results/star/sample.freq.txt --biasPlot results/star/sample.biasPlot.pdf
+
+# Correct GC bias
+deeptools correctGCBias -b results/star/sample-sorted.bam --effectiveGenomeSize 3099922541 -g GCA_000001405.15_GRCh38_no_alt_analysis_set.2bit --GCbiasFrequenciesFile results/star/sample.freq.txt -o results/star/sample.gc_corrected.bam
+
+# Generate coverage file
+bamCoverage -b results/star/sample.gc_corrected.bam -o results/star/sample.bw --normalizeUsing BPM --samFlagExclude 512
+
+# Extract transcripts
+gffread -w GRCh38_no_alt_analysis_set_gencode.v36.transcripts.fa -g GCA_000001405.15_GRCh38_no_alt_analysis_set.fna gencode.v36.annotation.gtf
+
+# Quantify expression using Salmon
+salmon quant -t GRCh38_no_alt_analysis_set_gencode.v36.transcripts.fa --libType A -a results/star/sample.gc_corrected.bam -o results/star/sample.salmon_quant --gcBias --seqBias
+
+
+deeptools computeGCBias -b results/star/sample-sorted.bam --effectiveGenomeSize 3099922541 -g GCA_000001405.15_GRCh38_no_alt_analysis_set.2bit -l 100 --GCbiasFrequenciesFile results/star/sample.freq.txt --biasPlot results/star/sample.biasPlot.pdf
+deeptools correctGCBias -b results/star/sample-sorted.bam --effectiveGenomeSize 3099922541 -g GCA_000001405.15_GRCh38_no_alt_analysis_set.2bit --GCbiasFrequenciesFile results/star/sample.freq.txt -o results/star/sample.gc_corrected.bam
+bamCoverage -b results/star/sample.gc_corrected.bam -o results/star/sample.bw --normalizeUsing BPM --samFlagExclude 512
+gffread -w GRCh38_no_alt_analysis_set_gencode.v36.transcripts.fa -g GCA_000001405.15_GRCh38_no_alt_analysis_set.fna gencode.v36.annotation.gtf
+salmon quant -t GRCh38_no_alt_analysis_set_gencode.v36.transcripts.fa --libType A -a results/star/sample.gc_corrected.bam -o results/star/sample.salmon_quant --gcBias --seqBias
+
+
+
